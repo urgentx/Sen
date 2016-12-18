@@ -11,20 +11,32 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Polygon;
+import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
+import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.ui.Window;
+import com.badlogic.gdx.scenes.scene2d.ui.Window.WindowStyle;
+import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.DragListener;
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.TimeUtils;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
 
+
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
@@ -44,9 +56,10 @@ public class GameScreen implements Screen {
     private OrthographicCamera camera;
     public SpriteBatch batch;
     public BitmapFont font;
-    private Texture dropImage, bucketImage, trainerImage, keeperImage, attackerImage, baseImage, attackerSheet, attackerSheet2;
+    private Texture  trainerImage, keeperImage, attackerImage, baseImage, attackerSheet, attackerSheet2, buyMenuBackground;
     TextureRegion[] attackerAnimationFrames, attacker2AnimationFrames;
     Animation animation, strongerAnimation; //anims for attacker types
+    TextureAtlas textureAtlas; //for registering drawables and regions, add it to our skin
 
     private Sound dropSound;
     private Music music;
@@ -64,7 +77,7 @@ public class GameScreen implements Screen {
 
     private int baseHp = 500;
     private int score, cash;
-    private Label baseHpLabel, scoreLabel, cashLabel;
+    private Label baseHpLabel, scoreLabel, cashLabel, buyLabel;
     private boolean keepersDefending;
     private int keeperSpawn; //increment with each tick()
 
@@ -73,6 +86,7 @@ public class GameScreen implements Screen {
     private ArrayList<Label> labels;
 
     Vector3 touchPos = new Vector3();
+    private Rectangle buyRect;
     private float easing = 0.05f;
 
     private Image keeperSourceImage1;
@@ -84,25 +98,34 @@ public class GameScreen implements Screen {
     private long lastTick;
     static Timer timer;
 
+    public enum State{
+        PAUSE, RUN, RESUME, STOPPED
+    }
+
+    private State state = State.RUN;
+
+
+
     ////////////////////////////
 
 
     Stage stage;
-    private Skin skin;
+    private Skin skin, windowSkin;
 
 
     public GameScreen(final Sen gam){
         this.game = gam;
 
         //load images
-        dropImage = new Texture(Gdx.files.internal("droplet.png"));
-        bucketImage = new Texture(Gdx.files.internal("bucket.png"));
+
+
         trainerImage = new Texture(Gdx.files.internal("trainer.png"));
         keeperImage = new Texture(Gdx.files.internal("keeper.png"));
         attackerImage = new Texture(Gdx.files.internal("attacker.png"));
         baseImage = new Texture(Gdx.files.internal("base.png"));
         attackerSheet = new Texture(Gdx.files.internal("attackersheet.png"));
         attackerSheet2 = new Texture(Gdx.files.internal("attackersheet2.png"));
+        buyMenuBackground = new Texture(Gdx.files.internal("buymenubg.png"));
 
         TextureRegion [] [] tmpFrames = TextureRegion.split(attackerSheet, 25, 25);
         TextureRegion [] [] tmpFrames1 = TextureRegion.split(attackerSheet2, 50, 50);
@@ -144,7 +167,10 @@ public class GameScreen implements Screen {
         stage = new Stage(new StretchViewport(800, 480)); //scene2d handles camera perspective
         Gdx.input.setInputProcessor(stage);
 
-        skin = new Skin();  //Skin holds our style options
+        textureAtlas = new TextureAtlas();
+        textureAtlas.addRegion("default-window", buyMenuBackground, 5, 5, 50, 50); //set up window background
+
+        skin = new Skin(Gdx.files.internal("gfx/uiskin.json"), textureAtlas); //initialise skin with JSON file and our image-loaded TA
         skin.add("default", new Label.LabelStyle(new BitmapFont(), Color.BLUE));
         skin.add("trainer", trainerImage);
         skin.add("keeper", keeperImage);
@@ -176,6 +202,12 @@ public class GameScreen implements Screen {
         cashLabel.setBounds(400, 430, 40, 30);
         stage.addActor(cashLabel);
 
+        buyRect = new Rectangle(700, 450, 40 , 30);
+        buyLabel = new Label("BUY", skin);
+        buyLabel.setBounds(700, 450, 40, 30);
+        stage.addActor(buyLabel);
+
+
 
         closestDistance = 1000; //default distance to closest defender for attackers
 
@@ -197,149 +229,219 @@ public class GameScreen implements Screen {
     @Override
     public void render(float delta){
 
-        keepersDefending = false;
+        switch(state){
+            case RUN:
+                //poll for input
 
-        Iterator<Keeper> keeperIterator = keepers.iterator();
-        while(keeperIterator.hasNext()) {       //iterate through all Keepers
-            Keeper keeper = keeperIterator.next();
-
-            keeper.update();
-            keeper.getSourceImage().setX(keeper.getX());    //update Actor location
-            keeper.getSourceImage().setY(keeper.getY());
-
-            keeper.getLabel().setX(keeper.getX() + 20);
-            keeper.getLabel().setY(keeper.getY() + 18);
-            keeper.getLabel().setText(Integer.toString(keeper.getLevel()));
-
-            if(keeper.getHp() <= 0){        //check for death
-                keeper.getSourceImage().remove();
-                keeper.getLabel().remove();
-                keeper = null;
-                keeperIterator.remove();
-            } else {
-
-                if (keeper.getX() < 500) {      //check if Keeper in defending zone
-                    keepersDefending = true;
+                if (Gdx.input.isTouched()){
+                    stage.getCamera().unproject(touchPos.set(Gdx.input.getX(0),Gdx.input.getY(0), 0 ));   //cam fixed for controls
+                    if(buyRect.contains(touchPos.x, touchPos.y)){
+                        openBuyMenu();
+                    }
                 }
-            }
+
+                keepersDefending = false;
+
+                Iterator<Keeper> keeperIterator = keepers.iterator();
+                while(keeperIterator.hasNext()) {       //iterate through all Keepers
+                    Keeper keeper = keeperIterator.next();
+
+                    keeper.update();
+                    keeper.getSourceImage().setX(keeper.getX());    //update Actor location
+                    keeper.getSourceImage().setY(keeper.getY());
+
+                    keeper.getLabel().setX(keeper.getX() + 20);
+                    keeper.getLabel().setY(keeper.getY() + 18);
+                    keeper.getLabel().setText(Integer.toString(keeper.getLevel()));
+
+                    if(keeper.getHp() <= 0){        //check for death
+                        keeper.getSourceImage().remove();
+                        keeper.getLabel().remove();
+                        keeper = null;
+                        keeperIterator.remove();
+                    } else {
+
+                        if (keeper.getX() < 500) {      //check if Keeper in defending zone
+                            keepersDefending = true;
+                        }
+                    }
+                }
+
+
+                Iterator<Attacker>  attackerIterator = attackers.iterator();
+                while(attackerIterator.hasNext()){      //iterate through all Attackers
+
+                    Attacker attacker = attackerIterator.next();
+
+                    attacker.update();
+                    attacker.getSourceImage().setX(attacker.getX());        //update Actor location
+                    attacker.getSourceImage().setY(attacker.getY());
+
+
+
+                    if(attacker.getHp() <= 0){      //check for death
+                        score += attacker.getBounty();
+                        cash += attacker.getBounty();
+                        attackerIterator.remove();
+                        attacker.getSourceImage().remove();
+                        attacker = null;
+
+                    } else {
+                        if (keepersDefending) {
+                            if (! keepers.isEmpty()) {       //check for collisions
+
+                                Keeper closest = null;
+                                closestDistance = 10000000; //reset so that all keepers are considered once more
+
+
+                                Iterator<Keeper> keeperIterator2 = keepers.iterator();
+                                while (keeperIterator2.hasNext()) {   //traverse keepers
+                                    Keeper keeper = keeperIterator2.next();
+                                    float keeperX = keeper.getX();
+                                    float keeperY = keeper.getY();
+
+                                    float xd = Math.abs(keeperX - attacker.getX()); //X distance from keeper to attacker
+                                    float yd = Math.abs(keeperY - attacker.getY()); //Y distance from keeper to attacker
+                                    float distance = (float) Math.sqrt(xd * xd + yd * yd);
+                                    Gdx.app.log("mytag1", "distance = " + distance + "keeperX = " + keeper.getX());
+                                    if (distance < closestDistance) {
+                                        closest = keeper;
+                                        closestDistance = distance;
+                                    }
+                                }
+
+                                if(closest != null) {
+
+                                    //Gdx.app.log("mytag1", " --" + closest.getX());
+                                    //move attacker toward keeper
+                                    float xSpeed = (closest.getX() - attacker.getX()) / 500;
+                                    float ySpeed = (closest.getY() - attacker.getY()) / 500;
+                                    float factor = 0.3f / (float) Math.sqrt(xSpeed * xSpeed + ySpeed * ySpeed);
+
+                                    attacker.setSpeedX(xSpeed * factor);
+                                    attacker.setSpeedY(ySpeed * factor);
+
+                                    //check for collision, deal damage
+                                    if (Math.abs(attacker.getX() - closest.getX()) < 10 && Math.abs(attacker.getY() - closest.getY()) < 10) {
+                                        closest.damage(attacker.getAttackDamage());
+                                        attacker.damage(closest.getAttackDamage());
+
+                                    }
+                                }
+
+
+                            }
+                        } else {        //else move attacker toward base
+
+                            float attackerX = attacker.getX(); //move these to global variables
+                            float attackerY = attacker.getY();
+                            float keeperX;
+                            float keeperY;
+                            float xd, yd;  //x distance, y distance from keeper
+                            float distance;
+
+                            float xSpeed = (525 - attacker.getX()) / 500;
+                            float ySpeed = (200 - attacker.getY()) / 500;
+
+
+                            attacker.setSpeedX(xSpeed);
+                            attacker.setSpeedY(ySpeed);
+
+                            if (attackerX > 480) {      //damage base
+                                baseHp -= 1;
+                            }
+
+                        }
+                    }
+
+                }
+
+
+                trainer1.update();
+                trainer2.update();
+
+                baseHpLabel.setText("HP " + baseHp);
+                scoreLabel.setText("Score " + score);
+                cashLabel.setText("$$ " + cash);
+
+                // if (TimeUtils.nanoTime() - lastTick > 1000000000 * 100) tick();
+
+
+                //keeperSourceImage1.setX(keeper1.getX());
+                // keeperSourceImage1.setY(keeper1.getY());
+
+                Gdx.gl.glClearColor(1f, 0.9f, 1f, 1);
+                Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+                stage.act(Gdx.graphics.getDeltaTime());
+                stage.draw();
+
+                break;
+            case PAUSE:
+                timer.cancel(); //pause timer
+                Gdx.gl.glClearColor(1f, 0.9f, 1f, 1);
+                Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+                stage.draw();
+                break;
+            case RESUME:
+
+                //resume timer
+                timer = new Timer();
+                timer.scheduleAtFixedRate(new TimerTask() {
+                    @Override
+                    public void run() {
+                        tick();
+                    }
+                }, new Date(), 10000); //tick at regular rate
+                state = State.RUN; //resume game
+                break;
+            case STOPPED:
+                break;
         }
 
 
-        Iterator<Attacker>  attackerIterator = attackers.iterator();
-        while(attackerIterator.hasNext()){      //iterate through all Attackers
+    }
 
-            Attacker attacker = attackerIterator.next();
+    private void openBuyMenu() {
 
-            attacker.update();
-            attacker.getSourceImage().setX(attacker.getX());        //update Actor location
-            attacker.getSourceImage().setY(attacker.getY());
+        pause();
 
+        //independent pause menu
+        final Window pause = new Window("BUY", skin);
+        pause.padTop(64);
 
-
-            if(attacker.getHp() <= 0){      //check for death
-                score += attacker.getBounty();
-                cash += attacker.getBounty();
-                attackerIterator.remove();
-                attacker.getSourceImage().remove();
-                attacker = null;
-
-            } else {
-                if (keepersDefending) {
-                    if (! keepers.isEmpty()) {       //check for collisions
-
-                        Keeper closest = null;
-                        closestDistance = 10000000; //reset so that all keepers are considered once more
-
-
-                        Iterator<Keeper> keeperIterator2 = keepers.iterator();
-                        while (keeperIterator2.hasNext()) {   //traverse keepers
-                            Keeper keeper = keeperIterator2.next();
-                            float keeperX = keeper.getX();
-                            float keeperY = keeper.getY();
-
-                            float xd = Math.abs(keeperX - attacker.getX()); //X distance from keeper to attacker
-                            float yd = Math.abs(keeperY - attacker.getY()); //Y distance from keeper to attacker
-                            float distance = (float) Math.sqrt(xd * xd + yd * yd);
-                            Gdx.app.log("mytag1", "distance = " + distance + "keeperX = " + keeper.getX());
-                            if (distance < closestDistance) {
-                                closest = keeper;
-                                closestDistance = distance;
-                            }
-                        }
-
-                        if(closest != null) {
-
-                            //Gdx.app.log("mytag1", " --" + closest.getX());
-                            //move attacker toward keeper
-                            float xSpeed = (closest.getX() - attacker.getX()) / 500;
-                            float ySpeed = (closest.getY() - attacker.getY()) / 500;
-                            float factor = 0.3f / (float) Math.sqrt(xSpeed * xSpeed + ySpeed * ySpeed);
-
-                            attacker.setSpeedX(xSpeed * factor);
-                            attacker.setSpeedY(ySpeed * factor);
-
-                            //check for collision, deal damage
-                            if (Math.abs(attacker.getX() - closest.getX()) < 10 && Math.abs(attacker.getY() - closest.getY()) < 10) {
-                                closest.damage(attacker.getAttackDamage());
-                                attacker.damage(closest.getAttackDamage());
-
-                            }
-                        }
-
-
-                    }
-                } else {        //else move attacker toward base
-
-                    float attackerX = attacker.getX(); //move these to global variables
-                    float attackerY = attacker.getY();
-                    float keeperX;
-                    float keeperY;
-                    float xd, yd;  //x distance, y distance from keeper
-                    float distance;
-
-                    float xSpeed = (525 - attacker.getX()) / 500;
-                    float ySpeed = (200 - attacker.getY()) / 500;
-
-
-                    attacker.setSpeedX(xSpeed);
-                    attacker.setSpeedY(ySpeed);
-
-                    if (attackerX > 480) {      //damage base
-                        baseHp -= 1;
-                    }
-
-                }
+        //build TextButtons with listeners
+        TextButton continueButton = new TextButton("continue", skin);
+        continueButton.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                pause.remove(); //could also setVisible(false)
+                state = State.RESUME;
             }
+        });
 
-        }
+        TextButton exitButton = new TextButton("wait", skin);
+        continueButton.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                //do nothing
+            }
+        });
 
+        //add buttons to Window, add Window to stage
+        pause.add(continueButton).row();
+        pause.add(exitButton).row();
+        pause.setSize(stage.getWidth() / 1.5f, stage.getHeight() / 1.5f);
+        pause.setPosition(stage.getWidth() / 2 - pause.getWidth() / 2, stage.getWidth() / 2 - pause.getWidth() / 2);
+        //pause.pack(); //packs window around contents
+        stage.addActor(pause);
 
-        trainer1.update();
-        trainer2.update();
-
-        baseHpLabel.setText("HP " + baseHp);
-        scoreLabel.setText("Score " + score);
-        cashLabel.setText("$$ " + cash);
-
-        // if (TimeUtils.nanoTime() - lastTick > 1000000000 * 100) tick();
-
-
-        //keeperSourceImage1.setX(keeper1.getX());
-        // keeperSourceImage1.setY(keeper1.getY());
-
-        Gdx.gl.glClearColor(1f, 0.9f, 1f, 1);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-        stage.act(Gdx.graphics.getDeltaTime());
-        stage.draw();
     }
 
     @Override
     public void dispose() {
         batch.dispose();
-        dropImage.dispose();
         dropSound.dispose();
         music.dispose();
-        bucketImage.dispose();
 
     }
 
@@ -462,9 +564,12 @@ public class GameScreen implements Screen {
 
     @Override
     public void pause() {
+        this.state = State.PAUSE;
     }
 
     @Override
     public void resume() {
+        this.state = State.RESUME;
     }
+
 }

@@ -30,7 +30,7 @@ public class Trainer {
     public void tick(){
         if(hasKeeper){
             keeper.giveXp(1f / keeper.getLevel());
-            keeper.increaseY(1f / keeper.getLevel());
+            keeper.increaseY(1f);
             if(keeper.getY() > 400){
                 keepers.peek().setY(80);
             }
