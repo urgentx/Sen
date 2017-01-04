@@ -21,38 +21,31 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.Stage;
-import com.badlogic.gdx.scenes.scene2d.ui.Button;
-
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Skin;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.ui.Window;
-import com.badlogic.gdx.scenes.scene2d.ui.Window.WindowStyle;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.DragListener;
-import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.TimeUtils;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
 
-
-import java.io.File;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.Iterator;
-import java.util.Timer;
-import java.util.TimerTask;
 
 
 /**
- * Created by Barco on 02-Oct-16.
+ * Screen with main game loop, logic, asset loading.
  */
+
 public class GameScreen implements Screen {
 
     final Sen game;
 
-    //initialise environment objects and game variables
+    //Initialise environment objects and game variables.
 
+    //Libgdx / Scene2D variables.
     private OrthographicCamera camera;
     public SpriteBatch batch;
     public BitmapFont font;
@@ -60,58 +53,55 @@ public class GameScreen implements Screen {
     TextureRegion[] attackerAnimationFrames, attacker2AnimationFrames;
     Animation animation, strongerAnimation; //anims for attacker types
     TextureAtlas textureAtlas; //for registering drawables and regions, add it to our skin
+    private Label baseHpLabel, scoreLabel, cashLabel, buyLabel;
+    private boolean keepersDefending;
+    private int keeperSpawn; //increment with each tick(), i.e. should a keeper spawn yet
+    Stage stage;
+    private Skin skin, windowSkin;
 
+    //Sound variables.
     private Sound dropSound;
     private Music music;
 
-    private Polygon bucket; //better to use Polygon than rect (rotation easy)
-    ShapeRenderer shapeRenderer; //to render our polygons
+    //User input variables.
+    Vector3 touchPos = new Vector3();
+    private Rectangle buyRect;
+    float closestDistance;
 
-    //test objects
+    //Lists of game objects.
+    private ArrayList<Keeper> keepers; //could use LGX List
+    private ArrayList<Attacker> attackers;
+    private ArrayList<Label> labels;
+
+    //Test objects.
     private Trainer trainer1;
     private Trainer trainer2;
     private Keeper keeper1;
     private Attacker attacker1;
 
-    float closestDistance;
-
+    //Variables for player use.
     private int baseHp = 500;
     private int score, cash;
-    private Label baseHpLabel, scoreLabel, cashLabel, buyLabel;
-    private boolean keepersDefending;
-    private int keeperSpawn; //increment with each tick()
+    private int numEradicates, numSlows; //Number of powerups in player inventory.
 
-    private ArrayList<Keeper> keepers; //could use LGX List
-    private ArrayList<Attacker> attackers;
-    private ArrayList<Label> labels;
-
-    Vector3 touchPos = new Vector3();
-    private Rectangle buyRect;
-    private float easing = 0.05f;
-
-    private Image keeperSourceImage1;
-
-    //variables for spawning rates
+    //Variables for spawning rates
     private int attackerSpawn;
 
-
+    //Variables for timekeeping
     private long lastTick;
-    static Timer timer;
+    float timer; //use this to determine how much time has passed since last tick in render() method.
+    private boolean firstTick; //set this to false after we call an initial tick().
 
+    //Tracker of game state. Change this when necessary, render() highly dependant on this.
     public enum State{
         PAUSE, RUN, RESUME, STOPPED
     }
 
-    private State state = State.RUN;
+    private State state = State.RUN; //initial State.
 
-
-
-    ////////////////////////////
-
-
-    Stage stage;
-    private Skin skin, windowSkin;
-
+    //Random test/unused variables.
+    private Polygon bucket; //better to use Polygon than rect (rotation easy)
+    ShapeRenderer shapeRenderer; //to render our polygons
 
     public GameScreen(final Sen gam){
         this.game = gam;
@@ -207,19 +197,13 @@ public class GameScreen implements Screen {
         buyLabel.setBounds(700, 450, 40, 30);
         stage.addActor(buyLabel);
 
-
-
         closestDistance = 1000; //default distance to closest defender for attackers
 
 
-        timer = new Timer();
+        //Timekeeping variables
+        timer = 0f;
+        firstTick = true;
 
-        timer.scheduleAtFixedRate(new TimerTask() {
-            @Override
-            public void run() {
-                tick();
-            }
-        }, new Date(), 10000); //tick at regular rate
 
         score = 0;
         cash = 0;
@@ -229,10 +213,22 @@ public class GameScreen implements Screen {
     @Override
     public void render(float delta){
 
+        //Check if our render method is called for the first time this execution.
+        if(firstTick){
+            tick(); //If so, call an initial tick().
+            firstTick = false; //No more ticks from here.
+        }
+
         switch(state){
             case RUN:
-                //poll for input
+                //First, we check if we need to tick (i.e. 10 seconds has passed)
+                timer += delta; //Add time since last frame to our timer float at each render()
+                if(timer >= 10){ //If these deltas add up to 10 seconds, we call tick()...
+                    tick();
+                    timer -= 10; // and set the timer back 10 seconds to start the loop again.
+                }
 
+                //Poll for input
                 if (Gdx.input.isTouched()){
                     stage.getCamera().unproject(touchPos.set(Gdx.input.getX(0),Gdx.input.getY(0), 0 ));   //cam fixed for controls
                     if(buyRect.contains(touchPos.x, touchPos.y)){
@@ -377,22 +373,12 @@ public class GameScreen implements Screen {
 
                 break;
             case PAUSE:
-                timer.cancel(); //pause timer
                 Gdx.gl.glClearColor(1f, 0.9f, 1f, 1);
                 Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
                 stage.draw();
                 break;
             case RESUME:
-
-                //resume timer
-                timer = new Timer();
-                timer.scheduleAtFixedRate(new TimerTask() {
-                    @Override
-                    public void run() {
-                        tick();
-                    }
-                }, new Date(), 10000); //tick at regular rate
-                state = State.RUN; //resume game
+                state = State.RUN;
                 break;
             case STOPPED:
                 break;
@@ -442,30 +428,38 @@ public class GameScreen implements Screen {
         batch.dispose();
         dropSound.dispose();
         music.dispose();
-
+        trainerImage.dispose();
+        keeperImage.dispose();
+        attackerImage.dispose();
+        baseImage.dispose();
+        attackerSheet.dispose();
+        attackerSheet2.dispose();
+        buyMenuBackground.dispose();
+        textureAtlas.dispose();
+        skin.dispose();
+        windowSkin.dispose();
+        stage.dispose();
+        font.dispose();
     }
 
     public void tick() {
-        Gdx.app.log("mytag", "ks: " + keeperSpawn);
+        Gdx.app.log("ks", "ks: " + keeperSpawn % 3);
         if(keeperSpawn % 3 == 0 && keepers.size() < 2) {
             spawnKeeper();
         }
 
         int spawnChance = MathUtils.random(100);
-        Gdx.app.log("hey", " " + spawnChance);
-
-
+        Gdx.app.log("ks", "spawnchance: " + spawnChance);
 
         if(spawnChance < 50){
             spawnAttacker();
-        } else if(spawnChance >= 50){
+        } else {
             spawnStrongerAttacker();
         }
         lastTick = TimeUtils.nanoTime();
         keeperSpawn++;
 
         score++;
-
     }
 
     public void spawnKeeper() {
@@ -517,8 +511,6 @@ public class GameScreen implements Screen {
         });
 
         keepers.add(keeper);
-
-
     }
 
     public void spawnAttacker() {
@@ -555,7 +547,6 @@ public class GameScreen implements Screen {
 
     @Override
     public void show() {
-
     }
 
     @Override

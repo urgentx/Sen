@@ -17,7 +17,6 @@ public class Keeper {
     private int speed, attackDamage;
     private float color;
 
-
     public Keeper(float x, float y, int level, Image sourceImage, Label label){
         this.x = x;
         this.y = y;
@@ -48,10 +47,8 @@ public class Keeper {
         if(xp + this.xp >= xpToLevel){
             level++;
             xpToLevel += 100;
-            //sourceImage.setColor(color,color,color, 0.7f);
             sourceImage.setColor(sourceImage.getColor().mul(2));
             color+=0.1f;
-            Gdx.app.log("hey", "haha " + color);
         }
         this.xp += xp;
     }

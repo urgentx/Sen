@@ -29,8 +29,8 @@ public class Trainer {
 
     public void tick(){
         if(hasKeeper){
-            keeper.giveXp(1f / keeper.getLevel());
-            keeper.increaseY(1f);
+            keeper.giveXp(0.5f / keeper.getLevel());
+            keeper.increaseY(0.5f);
             if(keeper.getY() > 400){
                 keepers.peek().setY(80);
             }
