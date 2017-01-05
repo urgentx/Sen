@@ -19,7 +19,10 @@ import com.badlogic.gdx.math.Polygon;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.Event;
+import com.badlogic.gdx.scenes.scene2d.EventListener;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
@@ -29,6 +32,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.Window;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.DragListener;
 import com.badlogic.gdx.utils.TimeUtils;
+import com.badlogic.gdx.utils.Timer;
 import com.badlogic.gdx.utils.viewport.StretchViewport;
 
 import java.util.ArrayList;
@@ -53,7 +57,7 @@ public class GameScreen implements Screen {
     TextureRegion[] attackerAnimationFrames, attacker2AnimationFrames;
     Animation animation, strongerAnimation; //anims for attacker types
     TextureAtlas textureAtlas; //for registering drawables and regions, add it to our skin
-    private Label baseHpLabel, scoreLabel, cashLabel, buyLabel;
+    private Label baseHpLabel, scoreLabel, cashLabel, buyLabel, eradLabel, slowLabel;
     private boolean keepersDefending;
     private int keeperSpawn; //increment with each tick(), i.e. should a keeper spawn yet
     Stage stage;
@@ -65,7 +69,7 @@ public class GameScreen implements Screen {
 
     //User input variables.
     Vector3 touchPos = new Vector3();
-    private Rectangle buyRect;
+    private Rectangle buyRect, eradRect, slowRect;
     float closestDistance;
 
     //Lists of game objects.
@@ -84,7 +88,9 @@ public class GameScreen implements Screen {
     private int score, cash;
     private int numEradicates, numSlows; //Number of powerups in player inventory.
 
-    //Variables for spawning rates
+    //Variables for attackers.
+    private static final int DEFAULT_ATTACKER_SPEED = 5;
+    private int attackerSpeedFactor;
     private int attackerSpawn;
 
     //Variables for timekeeping
@@ -107,8 +113,6 @@ public class GameScreen implements Screen {
         this.game = gam;
 
         //load images
-
-
         trainerImage = new Texture(Gdx.files.internal("trainer.png"));
         keeperImage = new Texture(Gdx.files.internal("keeper.png"));
         attackerImage = new Texture(Gdx.files.internal("attacker.png"));
@@ -153,6 +157,9 @@ public class GameScreen implements Screen {
 
         keeperSpawn = 0;
 
+        numEradicates = 0;
+        numSlows = 0;
+
 
         stage = new Stage(new StretchViewport(800, 480)); //scene2d handles camera perspective
         Gdx.input.setInputProcessor(stage);
@@ -192,6 +199,36 @@ public class GameScreen implements Screen {
         cashLabel.setBounds(400, 430, 40, 30);
         stage.addActor(cashLabel);
 
+        eradRect = new Rectangle(560, 430, 40, 30);
+        eradLabel = new Label("Erads " + numEradicates, skin);
+        eradLabel.setBounds(560, 430, 40, 30);
+        stage.addActor(eradLabel);
+        eradLabel.addListener(new InputListener() {
+            public boolean touchDown (InputEvent event, float x, float y, int pointer, int button) {
+                eradicate();
+                return false;
+            }
+
+            public void touchUp (InputEvent event, float x, float y, int pointer, int button) {
+
+            }
+        });
+
+        slowRect = new Rectangle(620, 430, 40, 30);
+        slowLabel = new Label("Slows " + numSlows, skin);
+        slowLabel.setBounds(620, 430, 40, 30);
+        stage.addActor(slowLabel);
+        slowLabel.addListener(new InputListener() {
+            public boolean touchDown (InputEvent event, float x, float y, int pointer, int button) {
+                slow();
+                return false;
+            }
+
+            public void touchUp (InputEvent event, float x, float y, int pointer, int button) {
+
+            }
+        });
+
         buyRect = new Rectangle(700, 450, 40 , 30);
         buyLabel = new Label("BUY", skin);
         buyLabel.setBounds(700, 450, 40, 30);
@@ -207,6 +244,10 @@ public class GameScreen implements Screen {
 
         score = 0;
         cash = 0;
+
+        attackerSpeedFactor = DEFAULT_ATTACKER_SPEED;
+
+
 
     }
 
@@ -233,7 +274,7 @@ public class GameScreen implements Screen {
                     stage.getCamera().unproject(touchPos.set(Gdx.input.getX(0),Gdx.input.getY(0), 0 ));   //cam fixed for controls
                     if(buyRect.contains(touchPos.x, touchPos.y)){
                         openBuyMenu();
-                    }
+                  }
                 }
 
                 keepersDefending = false;
@@ -276,11 +317,8 @@ public class GameScreen implements Screen {
 
 
                     if(attacker.getHp() <= 0){      //check for death
-                        score += attacker.getBounty();
-                        cash += attacker.getBounty();
                         attackerIterator.remove();
-                        attacker.getSourceImage().remove();
-                        attacker = null;
+                        killAttacker(attacker);
 
                     } else {
                         if (keepersDefending) {
@@ -312,10 +350,10 @@ public class GameScreen implements Screen {
                                     //move attacker toward keeper
                                     float xSpeed = (closest.getX() - attacker.getX()) / 500;
                                     float ySpeed = (closest.getY() - attacker.getY()) / 500;
-                                    float factor = 0.3f / (float) Math.sqrt(xSpeed * xSpeed + ySpeed * ySpeed);
+                                    //float factor = 0.3f / (float) Math.sqrt(xSpeed * xSpeed + ySpeed * ySpeed);
 
-                                    attacker.setSpeedX(xSpeed * factor);
-                                    attacker.setSpeedY(ySpeed * factor);
+                                    attacker.setSpeedX(xSpeed * attackerSpeedFactor);
+                                    attacker.setSpeedY(ySpeed * attackerSpeedFactor);
 
                                     //check for collision, deal damage
                                     if (Math.abs(attacker.getX() - closest.getX()) < 10 && Math.abs(attacker.getY() - closest.getY()) < 10) {
@@ -359,6 +397,8 @@ public class GameScreen implements Screen {
                 baseHpLabel.setText("HP " + baseHp);
                 scoreLabel.setText("Score " + score);
                 cashLabel.setText("$$ " + cash);
+                eradLabel.setText("Erads" + numEradicates);
+                slowLabel.setText("Slows " + numSlows);
 
                 // if (TimeUtils.nanoTime() - lastTick > 1000000000 * 100) tick();
 
@@ -387,6 +427,42 @@ public class GameScreen implements Screen {
 
     }
 
+    private void killAttacker(Attacker attacker){
+        score += attacker.getBounty();
+        cash += attacker.getBounty();
+        attacker.getSourceImage().remove();
+        attackers.remove(attacker);
+        attacker = null;
+    }
+
+    private void slow() {
+        if(numSlows >= 1) { //Check if player has any slows left.
+            attackerSpeedFactor = 1; // slow down attackers.
+            Timer t = new Timer(); //Set up a timer to resume normal speed.
+            t.scheduleTask(new Timer.Task() {
+                @Override
+                public void run() {
+                    attackerSpeedFactor = DEFAULT_ATTACKER_SPEED;
+                }
+            }, 3);
+            t.start();
+            numSlows--; //Take away a charge.
+        }
+
+    }
+
+    private void eradicate() {
+        if(numEradicates >= 1) { //Check if player has any erads left.
+            Iterator<Attacker> attackerIterator = attackers.iterator(); //Kill all attackers
+            while (attackerIterator.hasNext()) {
+                Attacker attacker = attackerIterator.next();
+                killAttacker(attacker);
+            }
+            numEradicates--; //Remove a charge.
+        }
+
+    }
+
     private void openBuyMenu() {
 
         pause();
@@ -405,17 +481,26 @@ public class GameScreen implements Screen {
             }
         });
 
-        TextButton exitButton = new TextButton("wait", skin);
-        continueButton.addListener(new ChangeListener() {
+        TextButton eradButton = new TextButton("Buy an Eradication", skin);
+        eradButton.addListener(new ChangeListener() {
             @Override
             public void changed(ChangeEvent event, Actor actor) {
-                //do nothing
+                numEradicates++;
+            }
+        });
+
+        TextButton slowButton = new TextButton("Buy a Slow", skin);
+        slowButton.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                numSlows++;
             }
         });
 
         //add buttons to Window, add Window to stage
         pause.add(continueButton).row();
-        pause.add(exitButton).row();
+        pause.add(eradButton).row();
+        pause.add(slowButton).row();
         pause.setSize(stage.getWidth() / 1.5f, stage.getHeight() / 1.5f);
         pause.setPosition(stage.getWidth() / 2 - pause.getWidth() / 2, stage.getWidth() / 2 - pause.getWidth() / 2);
         //pause.pack(); //packs window around contents
